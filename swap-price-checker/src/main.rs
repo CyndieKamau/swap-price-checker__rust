@@ -1,5 +1,6 @@
 use std::io;
 use std::collections::HashMap;
+use rand::Rng;
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -40,6 +41,7 @@ enum SwapError {
     NotEnoughLiquidity,
     InsufficientBalance,
     IncorrectNetwork,
+    BalanceNotFound,
 }
 
 
@@ -87,6 +89,11 @@ struct User {
     wallet_address: String,
     balances: HashMap<TokenType, f64>,
 
+}
+
+struct UserDatabase {
+
+    users: Vec<User>,
 }
 
 
@@ -446,7 +453,113 @@ impl ExchangeData {
 }
 
 
-//To work on, figure out how to get different swap rates for token pairs instead of one swap rate.
+
+//Implementing user logic
+
+impl User {
+
+    //create a new user with random balances
+    pub fn new(network: Network, wallet_address: String) -> Self {
+
+        let mut balances = HashMap::new();
+    
+
+    
+        // Generate random balances for each token
+        for token in [TokenType::USDC, TokenType::USDT, TokenType::BUSD].iter() {
+
+            balances.insert(*token, (rand::random::<u64>() % 10_000) as f64); // Randomly assigns 0 to 9999 tokens
+        }
+
+        User {
+
+            network,
+            wallet_address,
+            balances
+        }
+    }
+
+    // Function to check if user has sufficient balance of a given token
+    pub fn has_sufficient_balance(&self, token: TokenType, amount: f64) -> bool {
+
+
+        match self.balances.get(&token) {
+
+            Some(balance) => *balance >= amount,
+            None => false,
+        }
+    }
+
+
+    // Deduct the specified amount from the user's balance for a given token
+    pub fn deduct_balance(&mut self, token: TokenType, amount: f64) -> Result<(), SwapError> {
+
+        if self.has_sufficient_balance(token, amount) {
+
+            if let Some(balance) = self.balances.get_mut(&token) {
+
+                *balance -= amount;
+                Ok(())
+            } else {
+
+                Err(SwapError::BalanceNotFound)
+            }
+        } else {
+
+            Err(SwapError::InsufficientBalance)
+        }
+    }
+
+
+    // Add the specified amount to the user's balance for a given token
+    pub fn add_balance(&mut self, token: TokenType, amount: f64) {
+
+        *self.balances.entry(token).or_insert(0.0) += amount;
+    }    
+}
+
+//Managing multiple users
+
+impl UserDatabase {
+
+    //initialize a new empty db
+
+    pub fn new_db()  -> Self{
+
+        UserDatabase {users: HashMap::new()}
+    }
+
+    //Add new user to the db
+
+    pub fn add_user(&mut self, user: User) {
+
+        self.users.insert(user.wallet_address.clone(), user);
+    }
+
+    //fetch a user in db. Returns Option as user might not be in db
+
+    pub fn get_user_by_address(&self, address: &str) -> Option<&User> {
+
+        self.users.get(address)
+    }
+
+    // Fetch a mutable reference to a user by wallet address. This allows you to update the user's details.
+
+    pub fn get_user_by_address_mut(&mut self, address: &str) -> Option<&mut User> {
+
+        self.users.get_mut(address)
+    }
+
+    // Remove a user from database
+    
+    pub fn remove_user_by_address(&mut self, address: &str) {
+
+        self.users.remove(address)
+    }
+
+}
+
+
 
 fn main() {
     println!("Hello, world!");
