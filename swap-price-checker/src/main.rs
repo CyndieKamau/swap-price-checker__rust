@@ -1,9 +1,10 @@
+
 use std::io;
 use std::collections::HashMap;
 use rand::Rng;
 
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 //To represent our two tokens, USDC and USDT
 enum TokenType {
 
@@ -42,6 +43,7 @@ enum SwapError {
     InsufficientBalance,
     IncorrectNetwork,
     BalanceNotFound,
+    UserNotFound,
 }
 
 
@@ -70,6 +72,7 @@ struct ExchangeData {
 //when user decides to swap
 struct Swap {
 
+    user_wallet_address: String,
     from_token: Token,
     to_token: Token,
     amount: f64,      //amount of from_token to swap
@@ -83,6 +86,7 @@ struct SwapResult {
     slippage: f64
 }
 
+#[derive(Clone)]
 struct User {
 
     network: Network,
@@ -123,7 +127,7 @@ impl ExchangeData {
     pub fn simulate_swap(&self, from: TokenType, to: TokenType, amount: f64) -> Result<f64, SwapError> {
 
         // the "?" will return early with an Err if the pair isn't supported
-        self.check_token_pair(from, to)?       
+        self.check_token_pair(from, to)?;       
 
         for pair in &self.token_pairs {
 
@@ -139,8 +143,8 @@ impl ExchangeData {
             }
         }
 
-        //This is just a safety net for precaution
-        Err(SwapError::TokenPairNotSupported)
+        // If the loop completes without returning, it means no matching pair was found
+        return Err(SwapError::TokenPairNotSupported)
     }
 
 
@@ -526,41 +530,270 @@ impl UserDatabase {
 
     pub fn new_db()  -> Self{
 
-        UserDatabase {users: HashMap::new()}
+        UserDatabase {users: Vec::new()}
     }
 
     //Add new user to the db
 
     pub fn add_user(&mut self, user: User) {
 
-        self.users.insert(user.wallet_address.clone(), user);
+        self.users.push(user);
     }
 
     //fetch a user in db. Returns Option as user might not be in db
 
-    pub fn get_user_by_address(&self, address: &str) -> Option<&User> {
+    pub fn get_user_by_address(&mut self, address: &str) -> Option<&mut User> {
 
-        self.users.get(address)
+        self.users.iter_mut().find(|user| &user.wallet_address == address)
     }
 
     // Fetch a mutable reference to a user by wallet address. This allows you to update the user's details.
 
     pub fn get_user_by_address_mut(&mut self, address: &str) -> Option<&mut User> {
 
-        self.users.get_mut(address)
+        self.users.iter_mut().find(|user| user.wallet_address == address)
     }
 
     // Remove a user from database
     
     pub fn remove_user_by_address(&mut self, address: &str) {
 
-        self.users.remove(address)
+        if let Some(index) = self.users.iter().position(|user| user.wallet_address == address) {
+
+            self.users.remove(index);
+        }
     }
 
 }
 
 
+//Logic for performing a swap
+fn perform_swap(swap: &Swap, exchanges: &[ExchangeData], user_db: &mut UserDatabase) -> Result<SwapResult, SwapError> {
+    // 1. Fetch the user
+    let user = match user_db.get_user_by_address_mut(&swap.user_wallet_address) {
+        Some(u) => u,
+        None => return Err(SwapError::UserNotFound),
+    };
+
+    // 2. Ensure the user has enough balance for the swap
+    if !user.has_sufficient_balance(swap.from_token.token_type, swap.amount) {
+        return Err(SwapError::InsufficientBalance);
+    }
+
+    let mut best_result: Option<SwapResult> = None;
+
+    // 3. Loop through each exchange
+    for exchange in exchanges {
+        let result = exchange.simulate_swap(swap.from_token.token_type, swap.to_token.token_type, swap.amount);
+        
+        match result {
+            Ok(received_amount) => {
+                if best_result.is_none() || received_amount > best_result.as_ref().unwrap().received_amount {
+                    best_result = Some(SwapResult {
+                        exchange_name: exchange.exchange_name,
+                        received_amount,
+                        slippage: 0.01, // Assuming a fixed slippage of 1% for now
+                    });
+                }
+            },
+            Err(_) => continue,
+        }
+    }
+
+    // 4. If a suitable exchange is found, proceed with the swap
+    if let Some(best_swap) = best_result {
+        user.deduct_balance(swap.from_token.token_type, swap.amount)?;
+        user.add_balance(swap.to_token.token_type, best_swap.received_amount);
+        Ok(best_swap)
+    } else {
+        Err(SwapError::TokenPairNotSupported)
+    }
+}
+
+// `user_menu` provides an interactive interface to the user
+//The function allows the user to interact with their account by providing
+//multiple options, such as viewing balances or initiating a swap transaction.
+fn user_menu(wallet_address: &str, exchanges: &[ExchangeData], user_db: &mut UserDatabase) {
+    
+    loop {
+        println!("--- User Menu ---");
+        println!("1. View balances");
+        println!("2. Initiate swap");
+        println!("3. Exit");
+        println!("Select an option:");
+        println!();
+
+        let mut choice = String::new();
+        io::stdin().read_line(&mut choice).expect("Failed to read line");
+
+        match choice.trim() {
+            "1" => {
+               
+                let user = user_db.get_user_by_address_mut(wallet_address).unwrap();
+                
+                // View balances
+                println!("Your balances are: {:?}", user.balances);
+            },
+            "2" => {
+                // Initiate swap 
+                let from_token = select_token("Choose the token you want to swap FROM:");
+                let to_token = select_token("Choose the token you want to swap TO:");
+
+                //incase user chooses the same token to swap.
+                if from_token == to_token {
+                    println!("Both source and destination tokens are the same. Please try again.");
+                    continue;
+                }
+
+                println!("Enter the amount you want to swap:");
+                let mut amount_input = String::new();
+                io::stdin().read_line(&mut amount_input).expect("Failed to read line");
+                let amount: f64 = match amount_input.trim().parse() {
+                    Ok(val) => val,
+                    Err(_) => {
+                        println!("Invalid amount. Please try again.");
+                        continue;
+                    }
+                };
+
+                // Now use the perform_swap function
+                let swap = Swap {
+                    from_token: Token {
+                        token_type: from_token,
+                    },
+                    to_token: Token {
+                        token_type: to_token,
+                    },
+                    amount,
+                    user_wallet_address: wallet_address.to_string()
+                };
+
+                match perform_swap(&swap, exchanges, user_db) {
+                    Ok(result) => {
+                        println!("Swap Successful! Best exchange: {:?}. Received amount: {} with slippage of {}%",
+                            result.exchange_name, result.received_amount, result.slippage * 100.0);
+                    },
+                    Err(error) => {
+                        println!("Swap failed: {:?}", error);
+                    }
+                }
+            },
+            "3" => {
+                break;
+            },
+            _ => {
+                println!("Invalid choice.");
+            }
+        }
+    }
+}
+
+
+//This function is for selecting the token you want to swap FROM and TO
+fn select_token(prompt: &str) -> TokenType {
+    loop {
+        println!("{}", prompt);
+        println!("1. USDC");
+        println!("2. USDT");
+        println!("3. BUSD");
+        println!();
+
+
+        let mut choice = String::new();
+        io::stdin().read_line(&mut choice).expect("Failed to read line");
+
+        match choice.trim() {
+            "1" => return TokenType::USDC,
+            "2" => return TokenType::USDT,
+            "3" => return TokenType::BUSD,
+            _ => println!("Invalid choice. Please try again.")
+        }
+    }
+}
+
+
 
 fn main() {
-    println!("Hello, world!");
+
+    println!(r#"
+
+ 
+                        Welcome to ...
+
+
+                                          
+  ___  _  _  __ _  ____  __  ____    ____  ____  _  _ 
+ / __)( \/ )(  ( \(    \(  )(  __)  (    \(  __)( \/ )
+( (__  )  / /    / ) D ( )(  ) _)    ) D ( ) _)  )  ( 
+ \___)(__/  \_)__)(____/(__)(____)  (____/(____)(_/\_)
+
+
+              Thank you for choosing Cyndie Dex!!!
+
+              Cyndie Dex is designed to be user-friendly and to guide you through the world of token swaps.
+
+              Here's what you should know about Cyndie Dex;
+
+              1. **Decentralized Exchanges (DEX)**: Cyndie Dex aggregates prices from various decentralized exchanges 
+              to ensure you get the best rates.
+
+              2. **Swapping Tokens**: At the heart of this tool, you can seamlessly swap tokens from one type to another. 
+              Simply input the desired amount, and Cyndie Dex will find you the best rates and even calculate potential slippage!
+           
+              ⚠️ ----N.B.!!!--- Cyndie Dex is a Mock Simulator; the token prices do not reflect current prices. DYOR!!            
+  
+              🦀 Built with Love in Rust 🦀
+    "#);
+    
+    let exchanges = ExchangeData::mock_swap_data();
+    let mut user_db = UserDatabase::new_db();
+
+    loop {
+        // Ask the user for their wallet address
+        println!("Please enter your wallet address (or type 'exit' to quit):");
+        let mut wallet_address = String::new();
+        io::stdin().read_line(&mut wallet_address).expect("Failed to read line");
+
+        if wallet_address.trim() == "exit" {
+            break;
+        }
+
+        // Check if this user already exists in user_db
+        let user_exists = user_db.get_user_by_address(wallet_address.trim()).is_some();
+
+        if user_exists {
+            user_menu(wallet_address.trim(), &exchanges, &mut user_db);
+        } else {
+            // If its a New user, ask for their network
+            println!("Please select a network (1. Ethereum, 2. BNBChain, 3. Polygon):");
+            let mut network_input = String::new();
+            io::stdin().read_line(&mut network_input).expect("Failed to read line");
+            let network = match network_input.trim() {
+                "1" => Network::Ethereum,
+                "2" => Network::BNBChain,
+                "3" => Network::Polygon,
+                _ => {
+                    println!("Invalid selection");
+                    continue;
+                }
+            };
+
+            // Check if the network is Ethereum. If user chooses another network they get an error.
+            if network != Network::Ethereum {
+                println!("Error: {:?}", SwapError::IncorrectNetwork);
+                continue;
+            }
+
+            // Create new user with random balances and add to user_db
+            let new_user = User::new(network, wallet_address.trim().to_string());
+            user_db.add_user(new_user);
+            println!("User created with random balances!");
+
+            user_menu(wallet_address.trim(), &exchanges, &mut user_db);
+        }
+    }
 }
+
+
+
+
