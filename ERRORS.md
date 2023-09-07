@@ -298,13 +298,19 @@ impl User {
 
 I then iterated over each token and  generated random balances for each `rand::random()` crate, then inserted each balance in our `balances` Hash Map;
 
-For each token in `TokenType` {
+Pseudocode;
+
+```
+For each token in TokenType {
 
     randomly assign a number from 0 to 9999 to represent token balance;
     insert each of these tokens to the `balances` Hash Map;
     use the token as key to the hashmap, to find out user's balance(randomly generated) for that specific token.
 
 }
+```
+
+Code Snippet;
 
 ```rust
 ...
@@ -333,5 +339,59 @@ enum TokenType {
    BUSD,
 
 }
+```
+
+
+# 3. Mismatched Types; Expected `Vec<User>` found `HashMap<_,_>`
+
+It was another mismatched types error, where I initialized a new HashMap, instead of a Vector;
+
+It occured while I was implementing the logic for my `UserDatabase`, for managing multiple users in the program.
+
+```rust
+//Managing multiple users
+
+impl UserDatabase {
+
+    //initialize a new empty db
+
+    pub fn new_db()  -> Self{
+
+        UserDatabase {users: HashMap::new()}
+    }
+...
+```
+
+## Issue
+
+In my `UserDatabase` struct,I wanted to store users in a vector `db`, where I could get users via the index syntax `&[]`, or get method `get()`.
+
+Note all the users would be stored in a vector, but getting the user's balance was in a Hash Map.
+
+```rust
+struct UserDatabase {
+
+    users: Vec<User>,
+}
+```
+
+But when it came to implementing the logic for the `UserDatabase`, I initialized a new Hash Map and the compiler was expecting a Vector. 
+
+Hence the `mismatched types` error.
+
+## Solution
+
+```rust
+//Managing multiple users
+
+impl UserDatabase {
+
+    //initialize a new empty db
+
+    pub fn new_db()  -> Self{
+
+        UserDatabase {users: Vec::new()}
+    }
+...
 ```
 
