@@ -362,6 +362,19 @@ impl UserDatabase {
 ...
 ```
 
+Error;
+
+```sh
+error[E0308]: mismatched types
+   --> src/main.rs:526:30
+    |
+526 |         UserDatabase {users: HashMap::new()}
+    |                              ^^^^^^^^^^^^^^ expected `Vec<User>`, found `HashMap<_, _>`
+    |
+    = note: expected struct `Vec<User>`
+               found struct `HashMap<_, _>`
+```
+
 ## Issue
 
 In my `UserDatabase` struct,I wanted to store users in a vector `db`, where I could get users via the index syntax `&[]`, or get method `get()`.
@@ -391,6 +404,78 @@ impl UserDatabase {
     pub fn new_db()  -> Self{
 
         UserDatabase {users: Vec::new()}
+    }
+...
+```
+
+# 4. Mismatched Types; Expected `usize` found `String`
+
+The error relates to the `UserDatabase` error above;
+
+Code Snippet
+
+```rust
+//Managing multiple users
+
+impl UserDatabase {
+
+    //initialize a new empty db
+
+    pub fn new_db()  -> Self{
+
+        UserDatabase {users: HashMap::new()}
+    }
+    
+    //Add new user to the db
+
+    pub fn add_user(&mut self, user: User) {
+
+        self.users.insert(user.wallet_address.clone(), user);
+    }
+
+...
+```
+
+Error;
+
+```sh
+error[E0308]: mismatched types
+    --> src/main.rs:533:27
+     |
+533  |         self.users.insert(user.wallet_address.clone(), user);
+     |                    ------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `usize`, found `String`
+     |                    |
+     |                    arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/hp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1436:12
+     |
+1436 |     pub fn insert(&mut self, index: usize, element: T) {
+     |            ^^^^^^
+``` 
+
+## Issue
+
+After mistakenly initializing the user database as a hashmap, to add users to the db I was using `insert()` method applied to Hash Maps, but the compiler expected `push()` method for vectors.
+
+
+## Solution
+
+```rust
+impl UserDatabase {
+
+    //initialize a new empty db
+
+    pub fn new_db()  -> Self{
+
+        UserDatabase {users: Vec::new()}
+    }
+
+    //Add new user to the db
+
+    pub fn add_user(&mut self, user: User) {
+
+        self.users.push(user);
     }
 ...
 ```
