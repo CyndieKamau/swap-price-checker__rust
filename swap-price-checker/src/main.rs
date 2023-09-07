@@ -1,7 +1,6 @@
 
 use std::io;
 use std::collections::HashMap;
-use rand::Rng;
 
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
