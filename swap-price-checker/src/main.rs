@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-//To represent our two tokens, USDC and USDT
+//To represent our tokens 
+
 enum TokenType {
 
    USDC,
